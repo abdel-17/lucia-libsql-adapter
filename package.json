@@ -1,0 +1,21 @@
+{
+  "name": "lucia-libsql-adapter",
+  "version": "0.1.0",
+  "description": "libSQL adapter for Lucia",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "lucia",
+    "adapter",
+    "libsql",
+    "turso"
+  ],
+  "author": "abdel-17",
+  "license": "ISC",
+  "devDependencies": {
+    "@lucia-auth/adapter-test": "^3.0.1",
+    "lucia-auth": "^1.7.1"
+  }
+}
