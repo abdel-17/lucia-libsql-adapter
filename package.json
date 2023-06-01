@@ -10,7 +10,7 @@
     ".": "./index.js"
   },
   "scripts": {
-    "build": "rm -rf ./dist/* && tsc && cp ./package.json ./dist && cp .npmignore dist",
+    "build": "rm -rf ./dist/* && tsc",
     "test.local": "tsx test/local/index.ts",
     "test.turso": "tsx test/turso/index.ts"
   },
