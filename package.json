@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test.local": "tsx test/local/index.ts"
+    "test.local": "tsx test/local/index.ts",
+    "test.turso": "tsx test/turso/index.ts"
   },
   "keywords": [
     "lucia",
