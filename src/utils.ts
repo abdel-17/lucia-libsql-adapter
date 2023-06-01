@@ -1,4 +1,4 @@
-import type { KeySchema, SessionSchema, UserSchema } from "lucia-auth";
+import type { KeySchema, SessionSchema } from "lucia-auth";
 
 export const transformToSqliteValue = <_Obj extends Record<any, any>>(
   obj: _Obj
@@ -9,14 +9,16 @@ export const transformToSqliteValue = <_Obj extends Record<any, any>>(
 } => {
   return Object.fromEntries(
     Object.entries(obj).map(([key, val]) => {
-      if (typeof val !== "boolean") return [key, val];
+      if (typeof val !== "boolean") {
+        return [key, val];
+      }
       return [key, Number(val)];
     })
   ) as any;
 };
 
 export const transformDatabaseSession = (
-  session: SQLiteSessionSchema
+  session: SessionSchema
 ): SessionSchema => {
   return {
     id: session.id,
@@ -36,8 +38,6 @@ export const transformDatabaseKey = (key: SQLiteKeySchema): KeySchema => {
   };
 };
 
-export type SQLiteUserSchema = UserSchema;
-export type SQLiteSessionSchema = SessionSchema;
 export type SQLiteKeySchema = TransformToSQLiteSchema<KeySchema>;
 
 export type ReplaceBooleanWithNumber<T> = Extract<T, boolean> extends never

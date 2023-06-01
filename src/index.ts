@@ -1,27 +1,25 @@
+import { createOperator } from "./query.js";
 import {
-  transformDatabaseSession,
+  Adapter,
+  AdapterFunction,
+  SessionSchema,
+  UserSchema,
+} from "lucia-auth";
+import { Client, LibsqlError } from "@libsql/client";
+import {
   transformDatabaseKey,
+  transformDatabaseSession,
   transformToSqliteValue,
 } from "./utils.js";
-
-import type {
-  SQLiteKeySchema,
-  SQLiteSessionSchema,
-  SQLiteUserSchema,
-} from "./utils.js";
-
-import { createOperator } from "./query.js";
-import { runner } from "./runner.js";
-
-import type { Adapter, AdapterFunction, UserSchema } from "lucia-auth";
-import { Client, LibsqlError } from "@libsql/client";
+import type {} from "./utils.js";
+import { SQLiteKeySchema } from "./utils.js";
 
 export const libsql = (db: Client): AdapterFunction<Adapter> => {
   return (LuciaError) => {
-    const operator = createOperator(runner(db));
+    const operator = createOperator(db);
     return {
       getUser: async (userId) => {
-        return operator.get<SQLiteUserSchema>((ctx) => [
+        return operator.get<UserSchema>((ctx) => [
           ctx.selectFrom("auth_user", "*"),
           ctx.where("id", "=", userId),
         ]);
@@ -41,24 +39,23 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
               ctx.insertInto("auth_key", transformToSqliteValue(key)),
             ]);
             const [setUserResultSet] = await db.batch([
-              {
-                sql: setUserQuery.statement,
-                args: setUserQuery.params,
-              },
-              {
-                sql: setKeyQuery.statement,
-                args: setKeyQuery.params,
-              },
+              setUserQuery,
+              setKeyQuery,
             ]);
-            const setUserResult = setUserResultSet.rows as unknown[];
-            if (setUserResult.length < 1) throw new Error("Unexpected value");
-            return setUserResult[0] as UserSchema;
+            const rows = setUserResultSet.rows as any[];
+            if (rows.length < 1) {
+              throw new Error("Unexpected value");
+            }
+            return rows[0];
           }
-          const databaseUser = await operator.get<SQLiteUserSchema>((ctx) => [
+
+          const databaseUser = await operator.get<UserSchema>((ctx) => [
             ctx.insertInto("auth_user", user),
             ctx.returning("*"),
           ]);
-          if (!databaseUser) throw new TypeError("Unexpected type");
+          if (!databaseUser) {
+            throw new TypeError("Unexpected type");
+          }
           return databaseUser;
         } catch (error) {
           if (
@@ -73,7 +70,7 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
       },
       getSessionAndUserBySessionId: async (sessionId) => {
         const data = await operator.get<
-          SQLiteUserSchema & {
+          UserSchema & {
             _session_active_expires: number;
             _session_id: string;
             _session_idle_expires: number;
@@ -91,7 +88,10 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
           ctx.innerJoin("auth_user", "auth_user.id", "auth_session.user_id"),
           ctx.where("auth_session.id", "=", sessionId),
         ]);
-        if (!data) return null;
+        if (!data) {
+          return null;
+        }
+
         const {
           _session_active_expires,
           _session_id,
@@ -110,22 +110,20 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
         };
       },
       getSession: async (sessionId) => {
-        const databaseSession = await operator.get<SQLiteSessionSchema>(
-          (ctx) => [
-            ctx.selectFrom("auth_session", "*"),
-            ctx.where("id", "=", sessionId),
-          ]
-        );
-        if (!databaseSession) return null;
+        const databaseSession = await operator.get<SessionSchema>((ctx) => [
+          ctx.selectFrom("auth_session", "*"),
+          ctx.where("id", "=", sessionId),
+        ]);
+        if (!databaseSession) {
+          return null;
+        }
         return transformDatabaseSession(databaseSession);
       },
       getSessionsByUserId: async (userId) => {
-        const databaseSessions = await operator.getAll<SQLiteSessionSchema>(
-          (ctx) => [
-            ctx.selectFrom("auth_session", "*"),
-            ctx.where("user_id", "=", userId),
-          ]
-        );
+        const databaseSessions = await operator.getAll<SessionSchema>((ctx) => [
+          ctx.selectFrom("auth_session", "*"),
+          ctx.where("user_id", "=", userId),
+        ]);
         return databaseSessions.map((val) => transformDatabaseSession(val));
       },
       deleteUser: async (userId) => {
@@ -168,13 +166,13 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
       },
       updateUserAttributes: async (userId, attributes) => {
         if (Object.keys(attributes).length === 0) {
-          operator.run<SQLiteUserSchema>((ctx) => [
+          operator.run((ctx) => [
             ctx.selectFrom("auth_user", "*"),
             ctx.where("id", "=", userId),
           ]);
           return;
         }
-        await operator.run<SQLiteUserSchema>((ctx) => [
+        await operator.run((ctx) => [
           ctx.update("auth_user", attributes),
           ctx.where("id", "=", userId),
         ]);
@@ -204,7 +202,9 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
           ctx.selectFrom("auth_key", "*"),
           ctx.where("id", "=", keyId),
         ]);
-        if (!databaseKey) return null;
+        if (!databaseKey) {
+          return null;
+        }
         const transformedDatabaseKey = transformDatabaseKey(databaseKey);
         return transformedDatabaseKey;
       },
@@ -216,7 +216,7 @@ export const libsql = (db: Client): AdapterFunction<Adapter> => {
         return databaseKeys.map((val) => transformDatabaseKey(val));
       },
       updateKeyPassword: async (key, hashedPassword) => {
-        await operator.run<SQLiteKeySchema>((ctx) => [
+        await operator.run((ctx) => [
           ctx.update("auth_key", {
             hashed_password: hashedPassword,
           }),

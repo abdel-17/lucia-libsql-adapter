@@ -1,78 +1,83 @@
-const resolveQueryBlock = (block: Block): ResolvedBlock => {
-  const escapeName = (val: string) => {
-    if (val === "*") return val;
-    return `\`${val}\``;
-  };
-  if (block.type === "DELETE_FROM") {
-    return {
-      queryChunk: `DELETE FROM ${escapeName(block.table)}`,
-      params: [],
-    };
+import { Client } from "@libsql/client";
+
+function escapeName(val: string) {
+  if (val === "*") {
+    return val;
   }
-  if (block.type === "INNER_JOIN") {
-    return {
-      queryChunk: `INNER JOIN ${escapeName(block.targetTable)} ON ${
-        block.targetColumn
-      } = ${block.column}`,
-      params: [],
-    };
-  }
-  if (block.type === "RETURNING") {
-    return {
-      queryChunk: `RETURNING ${block.columns}`,
-      params: [],
-    };
-  }
-  if (block.type === "INSERT_INTO") {
-    const keys = Object.keys(block.values);
-    return {
-      queryChunk: `INSERT INTO ${escapeName(block.table)} (${keys.map((k) =>
-        escapeName(k)
-      )}) VALUES (${Array(keys.length).fill("?")})`,
-      params: keys.map((k) => block.values[k]),
-    };
-  }
-  if (block.type === "SELECT") {
-    return {
-      queryChunk: `SELECT ${block.columns} FROM ${escapeName(block.table)}`,
-      params: [],
-    };
-  }
-  if (block.type === "WHERE") {
-    return {
-      queryChunk: `WHERE ${block.column} ${block.comparator} ?`,
-      params: [block.value],
-    };
-  }
-  if (block.type === "UPDATE") {
-    const keys = Object.keys(block.values);
-    return {
-      queryChunk: `UPDATE ${escapeName(block.table)} SET ${keys.map((k) => {
-        return `${escapeName(k)} = ?`;
-      })}`,
-      params: keys.map((k) => block.values[k]),
-    };
-  }
-  if (block.type === "AND") {
-    const resolvedConditionQueryBlocks = block.whereBlocks.map((whereBlock) => {
+  return `\`${val}\``;
+}
+
+function resolveQueryBlock(block: Block): ResolvedBlock {
+  switch (block.type) {
+    case "DELETE_FROM":
       return {
-        queryChunk: `${whereBlock.column} ${whereBlock.comparator} ?`,
-        params: [whereBlock.value],
+        sql: `DELETE FROM ${escapeName(block.table)}`,
+        args: [],
       };
-    });
-    const conditionQueryChunk = resolvedConditionQueryBlocks
-      .map((resolvedBlock) => resolvedBlock.queryChunk)
-      .join(" AND ");
-    return {
-      queryChunk: `WHERE ${conditionQueryChunk}`,
-      params: resolvedConditionQueryBlocks.reduce(
-        (acc, curr) => [...acc, ...curr.params],
-        [] as ColumnValue[]
-      ),
-    };
+    case "INNER_JOIN":
+      return {
+        sql: `INNER JOIN ${escapeName(block.targetTable)} ON ${
+          block.targetColumn
+        } = ${block.column}`,
+        args: [],
+      };
+    case "RETURNING":
+      return {
+        sql: `RETURNING ${block.columns}`,
+        args: [],
+      };
+    case "INSERT_INTO": {
+      const keys = Object.keys(block.values);
+      return {
+        sql: `INSERT INTO ${escapeName(block.table)} (${keys.map((k) =>
+          escapeName(k)
+        )}) VALUES (${Array(keys.length).fill("?")})`,
+        args: keys.map((k) => block.values[k]),
+      };
+    }
+    case "SELECT":
+      return {
+        sql: `SELECT ${block.columns} FROM ${escapeName(block.table)}`,
+        args: [],
+      };
+    case "WHERE":
+      return {
+        sql: `WHERE ${block.column} ${block.comparator} ?`,
+        args: [block.value],
+      };
+    case "UPDATE": {
+      const keys = Object.keys(block.values);
+      return {
+        sql: `UPDATE ${escapeName(block.table)} SET ${keys.map((k) => {
+          return `${escapeName(k)} = ?`;
+        })}`,
+        args: keys.map((k) => block.values[k]),
+      };
+    }
+    case "AND": {
+      const resolvedConditionQueryBlocks = block.whereBlocks.map(
+        (whereBlock) => {
+          return {
+            sql: `${whereBlock.column} ${whereBlock.comparator} ?`,
+            args: [whereBlock.value],
+          };
+        }
+      );
+      const conditionQueryChunk = resolvedConditionQueryBlocks
+        .map((resolvedBlock) => resolvedBlock.sql)
+        .join(" AND ");
+      return {
+        sql: `WHERE ${conditionQueryChunk}`,
+        args: resolvedConditionQueryBlocks.reduce(
+          (acc, curr) => [...acc, ...curr.args],
+          [] as ColumnValue[]
+        ),
+      };
+    }
+    default:
+      throw new TypeError(`Invalid block type`);
   }
-  throw new TypeError(`Invalid block type`);
-};
+}
 
 const ctx = {
   innerJoin: (targetTable: string, targetColumn: string, column: string) => {
@@ -132,23 +137,19 @@ const ctx = {
   },
 } satisfies Record<string, (...args: any[]) => Block>;
 
-export const createOperator = <_Runner extends Runner>(runner: _Runner) => {
-  const resolveQueryBlocks = (blocks: Block[]) => {
-    const resolvedBlocks = blocks.map(resolveQueryBlock);
-    const statement = resolvedBlocks.map((block) => block.queryChunk).join(" ");
-    const params = resolvedBlocks.reduce((result, block) => {
-      result.push(...block.params);
+function resolveQueryBlocks(blocks: Block[]) {
+  const resolvedBlocks = blocks.map(resolveQueryBlock);
+  return {
+    sql: resolvedBlocks.map((block) => block.sql).join(" "),
+    args: resolvedBlocks.reduce((result, block) => {
+      result.push(...block.args);
       return result;
-    }, [] as ColumnValue[]);
-    return {
-      statement,
-      params,
-    };
+    }, [] as ColumnValue[]),
   };
+}
 
-  const write = <_Selection extends Record<string, ColumnValue>>(
-    createQueryBlocks: CreateQueryBlocks
-  ) => {
+export function createOperator(db: Client) {
+  const write = (createQueryBlocks: CreateQueryBlocks) => {
     const blocks = createQueryBlocks(ctx);
     return resolveQueryBlocks(blocks);
   };
@@ -156,24 +157,20 @@ export const createOperator = <_Runner extends Runner>(runner: _Runner) => {
     createQueryBlocks: CreateQueryBlocks
   ): Promise<_Selection | null> => {
     const query = write(createQueryBlocks);
-    const result = await runner.get(query.statement, query.params);
-    if (Array.isArray(result)) return result.at(0) ?? null;
-    return result ?? null;
+    const result = await db.execute(query);
+    const rows = result.rows as any[];
+    return rows.at(0) ?? null;
   };
   const getAll = async <_Selection extends Record<string, ColumnValue>>(
     createQueryBlocks: CreateQueryBlocks
   ): Promise<_Selection[]> => {
     const query = write(createQueryBlocks);
-    const result = await runner.get(query.statement, query.params);
-    if (!result) return [] as any;
-    if (!Array.isArray(result)) return [result] as any;
-    return result as any;
+    const result = await db.execute(query);
+    return result.rows as any[];
   };
-  const run = <_Selection extends Record<string, ColumnValue>>(
-    createQueryBlocks: CreateQueryBlocks
-  ): Promise<void> => {
+  const run = async (createQueryBlocks: CreateQueryBlocks) => {
     const query = write(createQueryBlocks);
-    return runner.run(query.statement, query.params) as any;
+    await db.execute(query);
   };
   return {
     write,
@@ -181,23 +178,17 @@ export const createOperator = <_Runner extends Runner>(runner: _Runner) => {
     getAll,
     run,
   } as const;
-};
+}
 
-export type Operator = ReturnType<typeof createOperator>;
-
-export type Context = typeof ctx;
+type Context = typeof ctx;
 
 type CreateQueryBlocks = (context: Context) => Block[];
 
 type ResolvedBlock = {
-  queryChunk: string;
-  params: ColumnValue[];
+  sql: string;
+  args: ColumnValue[];
 };
 
-export type Runner = {
-  get: (statement: string, params: ColumnValue[]) => Promise<any>;
-  run: (statement: string, params: ColumnValue[]) => Promise<void>;
-};
 type ColumnValue = string | number | null | bigint;
 
 type Block =
