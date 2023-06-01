@@ -1,5 +1,5 @@
 {
-  "name": "lucia-adapter-libsql",
+  "name": "lucia-libsql-adapter",
   "version": "0.1.0",
   "description": "libSQL adapter for Lucia",
   "type": "module",
