@@ -34,10 +34,11 @@ yarn add lucia-libsql-adapter (not tested)
 ```
 
 ## Testing
-This adapter was tested using [@lucia-auth/adapter-test](https://github.com/pilcrowOnPaper/lucia/tree/main/packages/adapter-test).
-All tests pass on both a local SQLite instance and on my Turso database.
-I also quickly tested it on the username-password authentication tutorial in the docs and everything was working.
-However, I can not guarantee that every functionality works 100%.
+This adapter was tested using [@lucia-auth/adapter-test](https://github.com/pilcrowOnPaper/lucia/tree/main/packages/adapter-test). All tests pass on both a local SQLite instance and on my Turso database.
+
+I also quickly tested login, sign up, and logout with username-password authentication, and everything worked as expected.
+
+However, I **cannot** guarantee that every functionality works 100%.
 
 ## Attributions
 Most of this package's code was just me copy pasting from the SQLite adapters and making changes where needed.
