@@ -1,6 +1,6 @@
 {
   "name": "lucia-libsql-adapter",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "libSQL adapter for Lucia",
   "type": "module",
   "main": "dist/index.js",
