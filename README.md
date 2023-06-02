@@ -6,6 +6,7 @@ a Lucia adapter for working with libSQL databases (which Turso is based on).
 Here is an example of using the adapter with a Turso database in SvelteKit.
 
 ```ts
+// src/lib/server/auth.ts
 import lucia from 'lucia-auth';
 import { sveltekit } from 'lucia-auth/middleware';
 import { libsql } from 'lucia-libsql-adapter';
