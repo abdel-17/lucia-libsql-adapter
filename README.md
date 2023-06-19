@@ -32,6 +32,6 @@ pnpm add lucia-libsql-adapter
 ```
 
 ## Attributions
-Most of this package's code was just me copy pasting from the SQLite adapters and making changes where needed.
+Most of this package was just me copy pasting from the SQLite adapter and making changes where needed.
 
 Credit goes to the [creator of Lucia](https://github.com/pilcrowOnPaper). Check out his work. It's awesome.
