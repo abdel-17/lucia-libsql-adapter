@@ -13,6 +13,6 @@
 - Updated README.md
 - Added CHANGELOG.md
 
-## 0.2.0-beta.0
+## 0.2.0-beta
 - Added support for Lucia v2 beta
 - Updated @libsql/client dependency to 0.2.1
