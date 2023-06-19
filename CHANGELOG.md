@@ -19,3 +19,6 @@
 
 ## 0.1.4-beta.2
 - Removed unused code from 0.1.3
+
+## 0.1.4-beta.3
+- Forgot to build the package in the previous release
