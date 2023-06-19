@@ -1,243 +1,194 @@
-import { createOperator } from "./query.js";
-import {
-  Adapter,
-  AdapterFunction,
-  SessionSchema,
-  UserSchema,
-} from "lucia-auth";
+import { helper, getSetArgs, escapeName } from "./utils.js";
+
+import type {
+	SessionSchema,
+	Adapter,
+	InitializeAdapter,
+	UserSchema,
+	KeySchema
+} from "lucia";
 import { Client, LibsqlError } from "@libsql/client";
-import {
-  transformDatabaseKey,
-  transformDatabaseSession,
-  transformToSqliteValue,
-} from "./utils.js";
-import type {} from "./utils.js";
-import { SQLiteKeySchema } from "./utils.js";
 
-export const libsql = (db: Client): AdapterFunction<Adapter> => {
-  return (LuciaError) => {
-    const operator = createOperator(db);
-    return {
-      getUser: async (userId) => {
-        return operator.get<UserSchema>((ctx) => [
-          ctx.selectFrom("auth_user", "*"),
-          ctx.where("id", "=", userId),
-        ]);
-      },
-      setUser: async (userId, attributes, key) => {
-        const user = {
-          id: userId,
-          ...attributes,
-        };
-        try {
-          if (key) {
-            const setUserQuery = operator.write((ctx) => [
-              ctx.insertInto("auth_user", user),
-              ctx.returning("*"),
-            ]);
-            const setKeyQuery = operator.write((ctx) => [
-              ctx.insertInto("auth_key", transformToSqliteValue(key)),
-            ]);
-            const [setUserResultSet] = await db.batch([
-              setUserQuery,
-              setKeyQuery,
-            ]);
-            const rows = setUserResultSet.rows as any[];
-            if (rows.length < 1) {
-              throw new Error("Unexpected value");
-            }
-            return rows[0];
-          }
+export const libsql = (
+	db: Client,
+	tables: {
+		user: string;
+		session: string;
+		key: string;
+	}
+): InitializeAdapter<Adapter> => {
+	const ESCAPED_USER_TABLE_NAME = escapeName(tables.user);
+	const ESCAPED_SESSION_TABLE_NAME = escapeName(tables.session);
+	const ESCAPED_KEY_TABLE_NAME = escapeName(tables.key);
 
-          const databaseUser = await operator.get<UserSchema>((ctx) => [
-            ctx.insertInto("auth_user", user),
-            ctx.returning("*"),
-          ]);
-          if (!databaseUser) {
-            throw new TypeError("Unexpected type");
-          }
-          return databaseUser;
-        } catch (error) {
-          if (
-            error instanceof LibsqlError &&
-            error.message.includes("UNIQUE constraint failed") &&
-            error.message.includes("auth_key.id")
-          ) {
-            throw new LuciaError("AUTH_DUPLICATE_KEY_ID");
-          }
-          throw error;
-        }
-      },
-      getSessionAndUserBySessionId: async (sessionId) => {
-        const data = await operator.get<
-          UserSchema & {
-            _session_active_expires: number;
-            _session_id: string;
-            _session_idle_expires: number;
-            _session_user_id: string;
-          }
-        >((ctx) => [
-          ctx.selectFrom(
-            "auth_session",
-            "auth_user.*",
-            "auth_session.id as _session_id",
-            "auth_session.active_expires as _session_active_expires",
-            "auth_session.idle_expires as _session_idle_expires",
-            "auth_session.user_id as _session_user_id"
-          ),
-          ctx.innerJoin("auth_user", "auth_user.id", "auth_session.user_id"),
-          ctx.where("auth_session.id", "=", sessionId),
-        ]);
-        if (!data) {
-          return null;
-        }
+	return (LuciaError) => {
+		return {
+			getUser: async (userId) => {
+				const result = await db.execute({
+					sql: `SELECT * FROM ${ESCAPED_USER_TABLE_NAME} WHERE id = ?`,
+					args: [userId]
+				});
+				const rows = result.rows as unknown[] as UserSchema[];
+				return rows.at(0) ?? null;
+			},
+			setUser: async (user, key) => {
+				const [userFields, userValues, userArgs] = helper(user);
+				const insertUserQuery = {
+					sql: `INSERT INTO ${ESCAPED_USER_TABLE_NAME} ( ${userFields} ) VALUES ( ${userValues} )`,
+					args: userArgs
+				};
+				if (!key) {
+					await db.execute(insertUserQuery);
+					return;
+				}
+				try {
+					const [keyFields, keyValues, keyArgs] = helper(key);
+					const insertKeyQuery = {
+						sql: `INSERT INTO ${ESCAPED_KEY_TABLE_NAME} ( ${keyFields} ) VALUES ( ${keyValues} )`,
+						args: keyArgs
+					};
+					await db.batch("write", [insertUserQuery, insertKeyQuery]);
+				} catch (e) {
+					if (
+						e instanceof LibsqlError &&
+						e.code === "SQLITE_CONSTRAINT_PRIMARYKEY" &&
+						e.message?.includes(".id")
+					) {
+						throw new LuciaError("AUTH_DUPLICATE_KEY_ID");
+					}
+					throw e;
+				}
+			},
+			deleteUser: async (userId) => {
+				await db.execute({
+					sql: `DELETE FROM ${ESCAPED_USER_TABLE_NAME} WHERE id = ?`,
+					args: [userId]
+				});
+			},
+			updateUser: async (userId, partialUser) => {
+				const [fields, values, args] = helper(partialUser);
+				args.push(userId);
+				await db.execute({
+					sql: `UPDATE ${ESCAPED_USER_TABLE_NAME} SET ${getSetArgs(
+						fields,
+						values
+					)} WHERE id = ?`,
+					args
+				});
+			},
 
-        const {
-          _session_active_expires,
-          _session_id,
-          _session_idle_expires,
-          _session_user_id,
-          ...user
-        } = data;
-        return {
-          user,
-          session: transformDatabaseSession({
-            id: _session_id,
-            user_id: _session_user_id,
-            active_expires: _session_active_expires,
-            idle_expires: _session_idle_expires,
-          }),
-        };
-      },
-      getSession: async (sessionId) => {
-        const databaseSession = await operator.get<SessionSchema>((ctx) => [
-          ctx.selectFrom("auth_session", "*"),
-          ctx.where("id", "=", sessionId),
-        ]);
-        if (!databaseSession) {
-          return null;
-        }
-        return transformDatabaseSession(databaseSession);
-      },
-      getSessionsByUserId: async (userId) => {
-        const databaseSessions = await operator.getAll<SessionSchema>((ctx) => [
-          ctx.selectFrom("auth_session", "*"),
-          ctx.where("user_id", "=", userId),
-        ]);
-        return databaseSessions.map((val) => transformDatabaseSession(val));
-      },
-      deleteUser: async (userId) => {
-        await operator.run((ctx) => [
-          ctx.deleteFrom("auth_user"),
-          ctx.where("id", "=", userId),
-        ]);
-      },
-      setSession: async (session) => {
-        try {
-          await operator.run((ctx) => [
-            ctx.insertInto("auth_session", session),
-          ]);
-        } catch (error) {
-          if (error instanceof LibsqlError) {
-            if (error.message.includes("FOREIGN KEY constraint failed")) {
-              throw new LuciaError("AUTH_INVALID_USER_ID");
-            }
-            if (
-              error.message.includes("UNIQUE constraint failed") &&
-              error.message.includes("auth_session.id")
-            ) {
-              throw new LuciaError("AUTH_DUPLICATE_SESSION_ID");
-            }
-          }
-          throw error;
-        }
-      },
-      deleteSession: async (sessionId) => {
-        await operator.run((ctx) => [
-          ctx.deleteFrom("auth_session"),
-          ctx.where("id", "=", sessionId),
-        ]);
-      },
-      deleteSessionsByUserId: async (userId) => {
-        await operator.run((ctx) => [
-          ctx.deleteFrom("auth_session"),
-          ctx.where("user_id", "=", userId),
-        ]);
-      },
-      updateUserAttributes: async (userId, attributes) => {
-        if (Object.keys(attributes).length === 0) {
-          operator.run((ctx) => [
-            ctx.selectFrom("auth_user", "*"),
-            ctx.where("id", "=", userId),
-          ]);
-          return;
-        }
-        await operator.run((ctx) => [
-          ctx.update("auth_user", attributes),
-          ctx.where("id", "=", userId),
-        ]);
-      },
-      setKey: async (key) => {
-        try {
-          await operator.run((ctx) => [
-            ctx.insertInto("auth_key", transformToSqliteValue(key)),
-          ]);
-        } catch (error) {
-          if (error instanceof LibsqlError) {
-            if (error.message.includes("FOREIGN KEY constraint failed")) {
-              throw new LuciaError("AUTH_INVALID_USER_ID");
-            }
-            if (
-              error.message.includes("UNIQUE constraint failed") &&
-              error.message.includes("auth_key.id")
-            ) {
-              throw new LuciaError("AUTH_DUPLICATE_KEY_ID");
-            }
-            throw error;
-          }
-        }
-      },
-      getKey: async (keyId) => {
-        const databaseKey = await operator.get<SQLiteKeySchema>((ctx) => [
-          ctx.selectFrom("auth_key", "*"),
-          ctx.where("id", "=", keyId),
-        ]);
-        if (!databaseKey) {
-          return null;
-        }
-        const transformedDatabaseKey = transformDatabaseKey(databaseKey);
-        return transformedDatabaseKey;
-      },
-      getKeysByUserId: async (userId) => {
-        const databaseKeys = await operator.getAll<SQLiteKeySchema>((ctx) => [
-          ctx.selectFrom("auth_key", "*"),
-          ctx.where("user_id", "=", userId),
-        ]);
-        return databaseKeys.map((val) => transformDatabaseKey(val));
-      },
-      updateKeyPassword: async (key, hashedPassword) => {
-        await operator.run((ctx) => [
-          ctx.update("auth_key", {
-            hashed_password: hashedPassword,
-          }),
-          ctx.where("id", "=", key),
-        ]);
-      },
-      deleteKeysByUserId: async (userId) => {
-        await operator.run((ctx) => [
-          ctx.deleteFrom("auth_key"),
-          ctx.where("user_id", "=", userId),
-        ]);
-      },
-      deleteNonPrimaryKey: async (keyId) => {
-        await operator.run((ctx) => [
-          ctx.deleteFrom("auth_key"),
-          ctx.and(
-            ctx.where("id", "=", keyId),
-            ctx.where("primary_key", "=", Number(false))
-          ),
-        ]);
-      },
-    };
-  };
+			getSession: async (sessionId) => {
+				const result = await db.execute({
+					sql: `SELECT * FROM ${ESCAPED_SESSION_TABLE_NAME} WHERE id = ?`,
+					args: [sessionId]
+				});
+				const rows = result.rows as unknown[] as SessionSchema[];
+				return rows.at(0) ?? null;
+			},
+			getSessionsByUserId: async (userId) => {
+				const result = await db.execute({
+					sql: `SELECT * FROM ${ESCAPED_SESSION_TABLE_NAME} WHERE user_id = ?`,
+					args: [userId]
+				});
+				return result.rows as unknown[] as SessionSchema[];
+			},
+			setSession: async (session) => {
+				try {
+					const [fields, values, args] = helper(session);
+					await db.execute({
+						sql: `INSERT INTO ${ESCAPED_SESSION_TABLE_NAME} ( ${fields} ) VALUES ( ${values} )`,
+						args
+					});
+				} catch (e) {
+					if (
+						e instanceof LibsqlError &&
+						e.code === "SQLITE_CONSTRAINT_FOREIGNKEY"
+					) {
+						throw new LuciaError("AUTH_INVALID_USER_ID");
+					}
+					throw e;
+				}
+			},
+			deleteSession: async (sessionId) => {
+				await db.execute({
+					sql: `DELETE FROM ${ESCAPED_SESSION_TABLE_NAME} WHERE id = ?`,
+					args: [sessionId]
+				});
+			},
+			deleteSessionsByUserId: async (userId) => {
+				await db.execute({
+					sql: `DELETE FROM ${ESCAPED_SESSION_TABLE_NAME} WHERE user_id = ?`,
+					args: [userId]
+				});
+			},
+			updateSession: async (sessionId, partialSession) => {
+				const [fields, values, args] = helper(partialSession);
+				const setArgs = getSetArgs(fields, values);
+				args.push(sessionId);
+				await db.execute({
+					sql: `UPDATE ${ESCAPED_SESSION_TABLE_NAME} SET ${setArgs} WHERE id = ?`,
+					args
+				});
+			},
+
+			getKey: async (keyId) => {
+				const result = await db.execute({
+					sql: `SELECT * FROM ${ESCAPED_KEY_TABLE_NAME} WHERE id = ?`,
+					args: [keyId]
+				});
+				const rows = result.rows as unknown[] as KeySchema[];
+				return rows.at(0) ?? null;
+			},
+			getKeysByUserId: async (userId) => {
+				const result = await db.execute({
+					sql: `SELECT * FROM ${ESCAPED_KEY_TABLE_NAME} WHERE user_id = ?`,
+					args: [userId]
+				});
+				return result.rows as unknown[] as KeySchema[];
+			},
+			setKey: async (key) => {
+				try {
+					const [fields, values, args] = helper(key);
+					await db.execute({
+						sql: `INSERT INTO ${ESCAPED_KEY_TABLE_NAME} ( ${fields} ) VALUES ( ${values} )`,
+						args
+					});
+				} catch (e) {
+					if (e instanceof LibsqlError) {
+						if (e.code === "SQLITE_CONSTRAINT_FOREIGNKEY") {
+							throw new LuciaError("AUTH_INVALID_USER_ID");
+						}
+						if (
+							e.code === "SQLITE_CONSTRAINT_PRIMARYKEY" &&
+							e.message?.includes(".id")
+						) {
+							throw new LuciaError("AUTH_DUPLICATE_KEY_ID");
+						}
+					}
+					throw e;
+				}
+			},
+			deleteKey: async (keyId) => {
+				await db.execute({
+					sql: `DELETE FROM ${ESCAPED_KEY_TABLE_NAME} WHERE id = ?`,
+					args: [keyId]
+				});
+			},
+			deleteKeysByUserId: async (userId) => {
+				await db.execute({
+					sql: `DELETE FROM ${ESCAPED_KEY_TABLE_NAME} WHERE user_id = ?`,
+					args: [userId]
+				});
+			},
+			updateKey: async (keyId, partialKey) => {
+				const [fields, values, args] = helper(partialKey);
+				const setArgs = getSetArgs(fields, values);
+				args.push(keyId);
+				await db.execute({
+					sql: `UPDATE ${ESCAPED_KEY_TABLE_NAME} SET ${setArgs} WHERE id = ?`,
+					args
+				});
+			}
+		};
+	};
 };
