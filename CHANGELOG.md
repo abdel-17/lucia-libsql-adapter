@@ -16,3 +16,6 @@
 ## 0.1.4-beta.1
 - Added support for Lucia v2 beta
 - Updated @libsql/client dependency to 0.2.1
+
+## 0.1.4-beta.2
+- Removed unused code from 0.1.3
