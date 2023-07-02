@@ -5,24 +5,29 @@ An unofficial libSQL adapter for [Lucia](https://lucia-auth.com/?).
 Here is an example of using the adapter with a Turso database in SvelteKit.
 
 ```ts
-// src/lib/server/auth.ts
-import lucia from 'lucia-auth';
-import { sveltekit } from 'lucia-auth/middleware';
+import { lucia } from 'lucia';
 import { libsql } from 'lucia-libsql-adapter';
-import { createClient } from '@libsql/client';
+import { sveltekit } from 'lucia/middleware';
 import { dev } from '$app/environment';
-import { DATABASE_URL, DATABASE_AUTH_TOKEN } from '$env/static/private';
+import { createClient } from '@libsql/client/web';
 
-const db = createClient({
-  url: DATABASE_URL,
-  authToken: DATABASE_AUTH_TOKEN
-});
+const client = createClient({
+  url: <your-database-url>,
+  authToken: <your-auth-token>
+})
 
 export const auth = lucia({
-  adapter: libsql(db),
-  env: dev ? 'DEV' : 'PROD',
-  middleware: sveltekit(),
+	adapter: libsql(turso, {
+		user: <user-table-name>,
+		session: <session-table-name>,
+		key: <key-table-name>
+	}),
+	env: dev ? 'DEV' : 'PROD',
+	middleware: sveltekit()
 });
+
+export type Auth = typeof auth;
+
 ```
 
 ## Installation
