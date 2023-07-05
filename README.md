@@ -1,6 +1,9 @@
 # Lucia libSQL Adapter
 An unofficial libSQL adapter for [Lucia](https://lucia-auth.com/?).
 
+## Warning ⚠️
+This package has been deprecated. Please use the [official libSQL adapter](https://v2.lucia-auth.com/database-adapters/libsql), instead.
+
 ### Code Sample
 Here is an example of using the adapter with a Turso database in SvelteKit.
 
